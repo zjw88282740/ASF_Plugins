@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!--
+    ASF 引用 DLL 所在目录。
+    - 本地：默认指向本机 ASF-generic 解压目录（按需改成你自己的路径）。
+    - CI：通过  dotnet build -p:ASFReferenceDir=<路径>  覆盖（见 .github/workflows/build.yml，
+      工作流会自动下载 ASF-generic.zip 并把解压目录传进来）。
+  -->
+  <PropertyGroup>
+    <ASFReferenceDir Condition="'$(ASFReferenceDir)' == ''">C:\Users\Ayrc\Downloads\ASF-generic</ASFReferenceDir>
+  </PropertyGroup>
+
+  <!-- 备份目录不参与编译 -->
+  <ItemGroup>
+    <Compile Remove="_backup\**\*.cs" />
+    <None Include="_backup\**\*.cs" />
+  </ItemGroup>
+
+  <!-- 以下引用运行时都由 ASF 提供，Private=false 表示不复制到插件输出目录 -->
+  <ItemGroup>
+    <!-- ASF 核心库 -->
+    <Reference Include="ArchiSteamFarm">
+      <HintPath>$(ASFReferenceDir)\ArchiSteamFarm.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- [Export] 插件注入所需 -->
+    <Reference Include="System.Composition.AttributedModel">
+      <HintPath>$(ASFReferenceDir)\System.Composition.AttributedModel.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- HtmlDocumentResponse 的类型依赖 AngleSharp -->
+    <Reference Include="AngleSharp">
+      <HintPath>$(ASFReferenceDir)\AngleSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- ArchiHandler.GetOwnedGames 的基类在 SteamKit2 中，编译期需要 -->
+    <Reference Include="SteamKit2">
+      <HintPath>$(ASFReferenceDir)\SteamKit2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,49 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # 目标 ASF 版本：升级 ASF 时改这里即可（会自动下载对应的 ASF-generic.zip 作为编译引用）
+  ASF_VERSION: "6.3.7.0"
+  DOTNET_VERSION: "10.0.x"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download ASF reference assemblies
+        run: |
+          curl -fL -o ASF-generic.zip \
+            "https://github.com/JustArchiNET/ArchiSteamFarm/releases/download/${ASF_VERSION}/ASF-generic.zip"
+          mkdir -p asf-ref
+          unzip -q ASF-generic.zip -d asf-ref
+          # 自动定位 ArchiSteamFarm.dll 所在目录（兼容根目录/子目录布局）
+          ASF_REF_DIR="$(dirname "$(find "$PWD/asf-ref" -name ArchiSteamFarm.dll | head -n1)")"
+          echo "ASF_REF_DIR=${ASF_REF_DIR}" >> "$GITHUB_ENV"
+          echo "使用 ASF 引用目录: ${ASF_REF_DIR}"
+
+      - name: Build
+        run: |
+          dotnet build SteamLibraryManager/SteamLibraryManager.csproj \
+            -c Release \
+            -p:ASFReferenceDir="${ASF_REF_DIR}"
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SteamLibraryManager
+          path: SteamLibraryManager/bin/Release/net10.0/SteamLibraryManager.dll
+          if-no-files-found: error

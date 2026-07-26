@@ -1,0 +1,14 @@
+# 构建产物
+bin/
+obj/
+
+# 备份的历史版本 & 分析用临时脚本（非插件本体，不入库）
+_backup/
+_analyzer/
+
+# Claude Code 会话目录
+.claude/
+
+# IDE / 用户文件
+*.user
+.vs/
