@@ -21,7 +21,7 @@ namespace SteamLibraryManagerPlugin
     public sealed class SteamLibraryManagerPlugin : IPlugin, IBotCommand2
     {
         public string Name => "Steam Library Manager";
-        public Version Version => new Version("1.7.0");
+        public Version Version => new Version("1.7.1");
 
         public Task OnLoaded()
         {
@@ -172,6 +172,7 @@ namespace SteamLibraryManagerPlugin
                 b.ArchiLogger.LogGenericInfo(
                     $"🛡️ {b.BotName}: 应拉黑 {toIgnore.Count + skipped} 款，已忽略 {skipped} 款(跳过)，" +
                     $"区域限制 {availability.RegionRestrictedCount} 款(跳过)，不可见 {availability.InvisibleCount} 款(跳过)，" +
+                    $"非游戏 {availability.NonGameCount} 款(跳过)，" +
                     $"本次实际拉黑 {availability.AppsToIgnore.Count} 款。"
                 );
 
@@ -367,6 +368,12 @@ namespace SteamLibraryManagerPlugin
                         {
                             result.InvisibleCount++;
                         }
+                        else if (item.type != EStoreAppType.k_EStoreAppType_Game)
+                        {
+                            // Demo/DLC/工具等条目可能在商店可见，但 Steam 不会将它们写入 rgIgnoredApps。
+                            // 若继续 POST，接口仍可能返回 2xx，导致每次执行都显示“成功”。
+                            result.NonGameCount++;
+                        }
                         else
                         {
                             result.AppsToIgnore.Add(appID);
@@ -506,6 +513,7 @@ namespace SteamLibraryManagerPlugin
         internal List<uint> AppsToIgnore { get; } = new List<uint>();
         internal int RegionRestrictedCount { get; set; }
         internal int InvisibleCount { get; set; }
+        internal int NonGameCount { get; set; }
         internal int UnknownCount { get; set; }
     }
 }

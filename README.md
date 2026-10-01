@@ -59,13 +59,14 @@
   - `StringBuilder.AppendLine($"...")`（插值重载被裁）→ 改用分段 `Append`
   - 静态 `Regex.Match(...)`（只剩实例方法）→ 改用官方 API / 手动解析
   - `JsonElement.TryGetProperty`（被裁）→ 改用 `EnumerateObject()`
-- **`syncignore` 优化**：先读 `store.steampowered.com/dynamicstore/userdata/` 的 `rgIgnoredApps`，跳过已忽略过的游戏，只 POST 还没忽略的，大幅减少请求量。
-- **区域上架预检**：每次执行都读取账号的实际 Steam 商店区域，并通过 `StoreBrowse.GetItems` 每批查询 100 个 AppID。明确为「区域限制」或「不可见」的条目会直接跳过，不发送忽略请求；查询失败或未返回的条目则回退为直接尝试，避免临时接口故障造成漏处理。查询结果不落盘，也不跨次缓存。
+- **`syncignore` 优化**：先读 `store.steampowered.com/dynamicstore/userdata/` 的 `rgIgnoredApps`，跳过已忽略过的游戏，只 POST 还没忽略的。
+- **区域上架预检**：每次执行都读取账号的实际 Steam 商店区域，并通过 `StoreBrowse.GetItems` 每批查询 100 个 AppID。明确为「区域限制」、「不可见」或 Demo/DLC/工具等非游戏类型的条目会直接跳过，不发送忽略请求；查询失败或未返回的条目则回退为直接尝试，避免临时接口故障造成漏处理。查询结果不落盘，也不跨次缓存。
 
 ## 版本
 
 | 版本 | 说明 |
 |------|------|
+| 1.7.1 | 跳过 Demo/DLC/工具等无法写入 `rgIgnoredApps` 的非游戏条目 |
 | 1.7.0 | `syncignore` 按账号商店区域批量预检上架状态，跳过区域限制和不可见条目，不做跨次缓存 |
 | 1.6.0 | `syncignore` 读取已忽略列表，跳过已忽略的游戏 |
 | 1.5.0 | `syncignore` 改为一条命令处理**全部在线账号** |
