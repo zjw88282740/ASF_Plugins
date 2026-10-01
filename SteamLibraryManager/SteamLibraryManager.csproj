@@ -48,6 +48,17 @@
       <HintPath>$(ASFReferenceDir)\SteamKit2.dll</HintPath>
       <Private>false</Private>
     </Reference>
+
+    <!-- Steam Unified Messages 生成类的泛型约束需要 protobuf-net -->
+    <Reference Include="protobuf-net">
+      <HintPath>$(ASFReferenceDir)\protobuf-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="protobuf-net.Core">
+      <HintPath>$(ASFReferenceDir)\protobuf-net.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

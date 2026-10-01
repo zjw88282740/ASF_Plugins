@@ -3,7 +3,7 @@
 一个 [ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm) (ASF) 插件，用于**多 Steam 账号**的库管理：
 
 - **`!exportall`** —— 汇总导出所有账号的游戏库（去重、标注每款游戏的持有账号，支持同一游戏被多个账号拥有），输出为可粘贴到 Excel 的 TSV 文件。
-- **`!syncignore`** —— 交叉防重复购买：让**每个账号**把「其他账号拥有、但自己没有」的游戏在商店里标记为**「不感兴趣 / 忽略」**（`ignore_reason=2`）。这样任意账号浏览商店时，已被其他小号拥有的游戏会被折叠，避免重复购买。
+- **`!syncignore`** —— 交叉防重复购买：让**每个账号**把「其他账号拥有、但自己没有」的游戏在商店里标记为**「不感兴趣 / 忽略」**（`ignore_reason=2`）。执行时会按各账号的实际商店区域批量查询上架状态，只提交当前区域可见的游戏，避免反复请求必定失败的条目。
 
 > 目标场景：你有多个 Steam 账号，希望一处总览全部游戏归属，并让各账号自动忽略掉「全家桶里已有」的游戏。
 
@@ -36,7 +36,7 @@
 
 ## 构建
 
-需要 **.NET 10 SDK**，以及 ASF 自带的这几个引用 DLL（`ArchiSteamFarm.dll`、`System.Composition.AttributedModel.dll`、`AngleSharp.dll`、`SteamKit2.dll`）。它们的所在目录由 csproj 里的 `ASFReferenceDir` 属性指定：
+需要 **.NET 10 SDK**，以及 ASF 自带的引用 DLL（`ArchiSteamFarm.dll`、`System.Composition.AttributedModel.dll`、`AngleSharp.dll`、`SteamKit2.dll`、`protobuf-net.dll`、`protobuf-net.Core.dll`）。它们的所在目录由 csproj 里的 `ASFReferenceDir` 属性指定：
 
 - **本地**：默认指向 `C:\Users\Ayrc\Downloads\ASF-generic`。改成你自己的 ASF-generic 解压目录（编辑 csproj），或直接传参：
 
@@ -60,12 +60,13 @@
   - 静态 `Regex.Match(...)`（只剩实例方法）→ 改用官方 API / 手动解析
   - `JsonElement.TryGetProperty`（被裁）→ 改用 `EnumerateObject()`
 - **`syncignore` 优化**：先读 `store.steampowered.com/dynamicstore/userdata/` 的 `rgIgnoredApps`，跳过已忽略过的游戏，只 POST 还没忽略的，大幅减少请求量。
-- **区域限制**：某些游戏在账号所属区未上架，无法忽略（接口返回 `400`），属正常现象，会被计入「失败」。
+- **区域上架预检**：每次执行都读取账号的实际 Steam 商店区域，并通过 `StoreBrowse.GetItems` 每批查询 100 个 AppID。明确为「区域限制」或「不可见」的条目会直接跳过，不发送忽略请求；查询失败或未返回的条目则回退为直接尝试，避免临时接口故障造成漏处理。查询结果不落盘，也不跨次缓存。
 
 ## 版本
 
 | 版本 | 说明 |
 |------|------|
+| 1.7.0 | `syncignore` 按账号商店区域批量预检上架状态，跳过区域限制和不可见条目，不做跨次缓存 |
 | 1.6.0 | `syncignore` 读取已忽略列表，跳过已忽略的游戏 |
 | 1.5.0 | `syncignore` 改为一条命令处理**全部在线账号** |
 | 1.4.0 | 修复忽略请求返回 400（表单需用具名参数 `data:` 传入，避免被当成 headers） |

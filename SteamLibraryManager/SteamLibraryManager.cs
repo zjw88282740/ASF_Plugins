@@ -12,6 +12,8 @@ using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Steam;
 using ArchiSteamFarm.Plugins.Interfaces;
 using AngleSharp.Dom;
+using SteamKit2;
+using SteamKit2.Internal;
 
 namespace SteamLibraryManagerPlugin
 {
@@ -19,7 +21,7 @@ namespace SteamLibraryManagerPlugin
     public sealed class SteamLibraryManagerPlugin : IPlugin, IBotCommand2
     {
         public string Name => "Steam Library Manager";
-        public Version Version => new Version("1.6.0");
+        public Version Version => new Version("1.7.0");
 
         public Task OnLoaded()
         {
@@ -163,8 +165,22 @@ namespace SteamLibraryManagerPlugin
                     toIgnore.Add(id);
                 }
 
-                b.ArchiLogger.LogGenericInfo($"🛡️ {b.BotName}: 应拉黑 {toIgnore.Count + skipped} 款，已忽略 {skipped} 款(跳过)，本次实际拉黑 {toIgnore.Count} 款。");
-                await ProcessIgnoreForBot(b, toIgnore).ConfigureAwait(false);
+                // Steam 的“忽略”接口只接受当前账号商店区域中可见的条目。
+                // 每次命令都通过 StoreBrowse 现场批量查询，不保存、不跨次缓存结果。
+                StoreAvailabilityResult availability = await FilterByStoreAvailability(b, toIgnore).ConfigureAwait(false);
+
+                b.ArchiLogger.LogGenericInfo(
+                    $"🛡️ {b.BotName}: 应拉黑 {toIgnore.Count + skipped} 款，已忽略 {skipped} 款(跳过)，" +
+                    $"区域限制 {availability.RegionRestrictedCount} 款(跳过)，不可见 {availability.InvisibleCount} 款(跳过)，" +
+                    $"本次实际拉黑 {availability.AppsToIgnore.Count} 款。"
+                );
+
+                if (availability.UnknownCount > 0)
+                {
+                    b.ArchiLogger.LogGenericWarning($"⚠ {b.BotName}: {availability.UnknownCount} 款上架状态查询失败或未返回，已回退为直接尝试拉黑。");
+                }
+
+                await ProcessIgnoreForBot(b, availability.AppsToIgnore).ConfigureAwait(false);
             }
 
             ASF.ArchiLogger.LogGenericInfo("🎉 全部账号拉黑任务已完成！");
@@ -259,6 +275,145 @@ namespace SteamLibraryManagerPlugin
             return result;
         }
 
+        // 根据账号的 Steam 商店国家/地区，批量筛出当前可见的 AppID。
+        // 明确的区域限制或不可见条目会跳过；查询异常、返回失败或缺失的条目会回退为直接尝试。
+        private async Task<StoreAvailabilityResult> FilterByStoreAvailability(Bot bot, IReadOnlyCollection<uint> appIDs)
+        {
+            var result = new StoreAvailabilityResult();
+            if (appIDs.Count == 0) return result;
+
+            string? countryCode;
+            try
+            {
+                countryCode = await GetStoreCountry(bot).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                bot.ArchiLogger.LogGenericWarning($"⚠ {bot.BotName}: 获取商店国家/地区失败：{ex.Message}");
+                countryCode = null;
+            }
+
+            if (string.IsNullOrEmpty(countryCode))
+            {
+                result.AppsToIgnore.AddRange(appIDs);
+                result.UnknownCount = appIDs.Count;
+                return result;
+            }
+
+            bot.ArchiLogger.LogGenericInfo($"🌐 {bot.BotName}: 商店区域 {countryCode}，正在查询 {appIDs.Count} 款候选游戏的上架状态...");
+
+            SteamUnifiedMessages? unifiedMessages = bot.GetHandler<SteamUnifiedMessages>();
+            if (unifiedMessages == null)
+            {
+                result.AppsToIgnore.AddRange(appIDs);
+                result.UnknownCount = appIDs.Count;
+                return result;
+            }
+
+            StoreBrowse service = unifiedMessages.CreateService<StoreBrowse>();
+
+            foreach (uint[] chunk in appIDs.Chunk(100))
+            {
+                try
+                {
+                    var request = new CStoreBrowse_GetItems_Request
+                    {
+                        context = new StoreBrowseContext
+                        {
+                            language = "schinese",
+                            country_code = countryCode
+                        },
+                        data_request = new StoreBrowseItemDataRequest
+                        {
+                            include_basic_info = false,
+                            include_all_purchase_options = false,
+                            apply_user_filters = false
+                        }
+                    };
+
+                    foreach (uint appID in chunk)
+                    {
+                        request.ids.Add(new StoreItemID { appid = appID });
+                    }
+
+                    SteamUnifiedMessages.ServiceMethodResponse<CStoreBrowse_GetItems_Response> response =
+                        await service.GetItems(request)
+                            .ToLongRunningTask<SteamUnifiedMessages.ServiceMethodResponse<CStoreBrowse_GetItems_Response>>()
+                            .ConfigureAwait(false);
+
+                    if (response.Result != EResult.OK)
+                    {
+                        result.AppsToIgnore.AddRange(chunk);
+                        result.UnknownCount += chunk.Length;
+                        continue;
+                    }
+
+                    var returned = new HashSet<uint>();
+                    foreach (StoreItem item in response.Body.store_items)
+                    {
+                        uint appID = item.appid != 0 ? item.appid : item.id;
+                        if (appID == 0 || !returned.Add(appID)) continue;
+
+                        if (item.success == 0)
+                        {
+                            result.AppsToIgnore.Add(appID);
+                            result.UnknownCount++;
+                        }
+                        else if (item.unvailable_for_country_restriction)
+                        {
+                            result.RegionRestrictedCount++;
+                        }
+                        else if (!item.visible)
+                        {
+                            result.InvisibleCount++;
+                        }
+                        else
+                        {
+                            result.AppsToIgnore.Add(appID);
+                        }
+                    }
+
+                    foreach (uint appID in chunk)
+                    {
+                        if (returned.Contains(appID)) continue;
+                        result.AppsToIgnore.Add(appID);
+                        result.UnknownCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    bot.ArchiLogger.LogGenericWarning($"⚠ {bot.BotName}: 批量查询上架状态失败：{ex.Message}");
+                    result.AppsToIgnore.AddRange(chunk);
+                    result.UnknownCount += chunk.Length;
+                }
+            }
+
+            return result;
+        }
+
+        // wallet_country_code 代表实际的 Steam 商店区域；user_country_code 仅作后备。
+        private static async Task<string?> GetStoreCountry(Bot bot)
+        {
+            SteamUnifiedMessages? unifiedMessages = bot.GetHandler<SteamUnifiedMessages>();
+            if (unifiedMessages == null) return null;
+
+            UserAccount service = unifiedMessages.CreateService<UserAccount>();
+            var request = new CUserAccount_GetClientWalletDetails_Request
+            {
+                include_formatted_balance = false,
+                include_balance_in_usd = false
+            };
+
+            SteamUnifiedMessages.ServiceMethodResponse<CUserAccount_GetWalletDetails_Response> response =
+                await service.GetClientWalletDetails(request)
+                    .ToLongRunningTask<SteamUnifiedMessages.ServiceMethodResponse<CUserAccount_GetWalletDetails_Response>>()
+                    .ConfigureAwait(false);
+
+            if (response.Result != EResult.OK) return null;
+            if (!string.IsNullOrEmpty(response.Body.wallet_country_code)) return response.Body.wallet_country_code.ToUpperInvariant();
+            return string.IsNullOrEmpty(response.Body.user_country_code) ? null : response.Body.user_country_code.ToUpperInvariant();
+        }
+
         // ================= 底层基础方法 =================
         // 使用 ASF 官方公开 API（走 Steam 的 Player.GetOwnedGames）。
         // - 按“所有权/许可证”返回完整列表，包含库内被“隐藏”的游戏；
@@ -344,5 +499,13 @@ namespace SteamLibraryManagerPlugin
     {
         public uint AppID { get; set; }
         public string? Name { get; set; }
+    }
+
+    internal sealed class StoreAvailabilityResult
+    {
+        internal List<uint> AppsToIgnore { get; } = new List<uint>();
+        internal int RegionRestrictedCount { get; set; }
+        internal int InvisibleCount { get; set; }
+        internal int UnknownCount { get; set; }
     }
 }
